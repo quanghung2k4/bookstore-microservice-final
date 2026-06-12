@@ -1,0 +1,206 @@
+version: "3.9"
+
+services:
+  frontend_service:
+    build:
+      context: ./frontend_service
+    command: sh -c "npm install && npm run dev -- --host 0.0.0.0 --port 3000"
+    volumes:
+      - ./frontend_service:/app
+      - /app/node_modules
+    ports:
+      - "3000:3000"
+    environment:
+      VITE_API_BASE_URL: http://localhost:8000/gateway
+      CHOKIDAR_USEPOLLING: "true"
+      CHOKIDAR_INTERVAL: "300"
+    depends_on:
+      - api_gateway
+
+  api_gateway:
+    build:
+      context: ./api_gateway
+    command: python manage.py runserver 0.0.0.0:8000
+    volumes:
+      - ./api_gateway:/app
+      - api_gateway_data:/data
+    ports:
+      - "8000:8000"
+    environment:
+      SQLITE_PATH: /data/db.sqlite3
+      PRODUCT_SERVICE_URL: http://product_service:8001
+      CART_SERVICE_URL: http://cart_service:8002
+      ORDER_SERVICE_URL: http://order_service:8003
+      USER_SERVICE_URL: http://user_service:8004
+      PAYMENT_SERVICE_URL: http://payment_service:8005
+      SHIPPING_SERVICE_URL: http://shipping_service:8006
+      AI_SERVICE_URL: http://ai_service:8007
+    depends_on:
+      product_service:
+        condition: service_started
+      cart_service:
+        condition: service_started
+      order_service:
+        condition: service_started
+      user_service:
+        condition: service_started
+      payment_service:
+        condition: service_started
+      shipping_service:
+        condition: service_started
+      ai_service:
+        condition: service_healthy
+
+  ai_service:
+    build:
+      context: ./ai_service
+    command: sh -c "python manage.py migrate && python manage.py runserver 0.0.0.0:8007"
+    volumes:
+      - ./ai_service:/app
+      - ai_service_data:/data
+    ports:
+      - "8007:8007"
+    environment:
+      SQLITE_PATH: /data/db.sqlite3
+      PRODUCT_SERVICE_URL: http://product_service:8001
+      ORDER_SERVICE_URL: http://order_service:8003
+      USER_SERVICE_URL: http://user_service:8004
+      NEO4J_URI: bolt://neo4j:7687
+      NEO4J_USER: neo4j
+      NEO4J_PASSWORD: password123
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      LLM_MODEL: gemini-2.5-flash
+      MODEL_DIR: /app/model_store
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          'python -c "import urllib.request; urllib.request.urlopen(''http://localhost:8007/api/health/'', timeout=3)" || exit 1',
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+    depends_on:
+      neo4j:
+        condition: service_started
+      product_service:
+        condition: service_started
+      order_service:
+        condition: service_started
+
+  neo4j:
+    image: neo4j:5.14
+    ports:
+      - "7474:7474"
+      - "7687:7687"
+    environment:
+      NEO4J_AUTH: neo4j/password123
+      NEO4J_PLUGINS: '["apoc"]'
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          'cypher-shell -a bolt://localhost:7687 -u neo4j -p password123 "RETURN 1;" || exit 1',
+        ]
+      interval: 10s
+      timeout: 10s
+      retries: 12
+      start_period: 20s
+    volumes:
+      - neo4j_data:/data
+      - neo4j_logs:/logs
+      - neo4j_plugins:/plugins
+
+  product_service:
+    build:
+      context: ./product_service
+    command: sh /app/start.sh
+    volumes:
+      - ./product_service:/app
+      - product_service_data:/data
+    ports:
+      - "8001:8001"
+    environment:
+      SQLITE_PATH: /data/db.sqlite3
+
+  cart_service:
+    build:
+      context: ./cart_service
+    command: sh -c "python manage.py migrate && python manage.py runserver 0.0.0.0:8002"
+    volumes:
+      - ./cart_service:/app
+      - cart_service_data:/data
+    ports:
+      - "8002:8002"
+    environment:
+      SQLITE_PATH: /data/db.sqlite3
+      PRODUCT_SERVICE_URL: http://product_service:8001
+      USER_SERVICE_URL: http://user_service:8004
+
+  order_service:
+    build:
+      context: ./order_service
+    command: sh -c "python manage.py migrate && python manage.py runserver 0.0.0.0:8003"
+    volumes:
+      - ./order_service:/app
+      - order_service_data:/data
+    ports:
+      - "8003:8003"
+    environment:
+      SQLITE_PATH: /data/db.sqlite3
+      PRODUCT_SERVICE_URL: http://product_service:8001
+      CART_SERVICE_URL: http://cart_service:8002
+      USER_SERVICE_URL: http://user_service:8004
+      PAYMENT_SERVICE_URL: http://payment_service:8005
+      AI_SERVICE_URL: http://ai_service:8007
+
+  user_service:
+    build:
+      context: ./user_service
+    command: sh -c "python manage.py migrate && python manage.py runserver 0.0.0.0:8004"
+    volumes:
+      - ./user_service:/app
+      - user_service_data:/data
+    ports:
+      - "8004:8004"
+    environment:
+      SQLITE_PATH: /data/db.sqlite3
+
+  payment_service:
+    build:
+      context: ./payment_service
+    command: sh -c "python manage.py migrate && python manage.py runserver 0.0.0.0:8005"
+    volumes:
+      - ./payment_service:/app
+      - payment_service_data:/data
+    ports:
+      - "8005:8005"
+    environment:
+      SQLITE_PATH: /data/db.sqlite3
+      ORDER_SERVICE_URL: http://order_service:8003
+
+  shipping_service:
+    build:
+      context: ./shipping_service
+    command: sh -c "python manage.py migrate && python manage.py runserver 0.0.0.0:8006"
+    volumes:
+      - ./shipping_service:/app
+      - shipping_service_data:/data
+    ports:
+      - "8006:8006"
+    environment:
+      SQLITE_PATH: /data/db.sqlite3
+
+volumes:
+  api_gateway_data:
+  product_service_data:
+  cart_service_data:
+  order_service_data:
+  user_service_data:
+  payment_service_data:
+  shipping_service_data:
+  ai_service_data:
+  neo4j_data:
+  neo4j_logs:
+  neo4j_plugins:
